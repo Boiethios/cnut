@@ -1,0 +1,43 @@
+[package]
+name = "cnut"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "cli"
+path = "cli/main.rs"
+
+[dependencies]
+directories = "5"
+flexi_logger = { version = "0.27", features = ["async"] }
+futures = "0.3"
+git2 = "0.18"
+hex_fmt = "0.3"
+indicatif = "0.17"
+log = "0.4"
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+tempfile = "3"
+thiserror = "1"
+toml = "0.8"
+
+# Crypto
+derp = "0.0.14"
+ed25519-dalek = { version = "2", features = ["pkcs8", "pem"] }
+k256 = "0.13"
+
+# Web
+axum = "0.7"
+maud = "0.26"
+reqwest = { version = "0.11", features = ["json"] }
+tower-http = { version = "0.5", features = ["fs"] }
+
+[dependencies.tokio]
+version = "1"
+features = [
+    "rt-multi-thread",
+    "macros",
+    "process", # To run sub-processes
+    "fs", # To read directories, copy files, etc.
+    "sync", # To get the oneshot channel
+]

@@ -18,3 +18,11 @@ td {
 button {
     margin: 1em 0;
 }
+
+a.file {
+    color: inherit;
+
+    &::before {
+        content: "🖹";
+    }
+}

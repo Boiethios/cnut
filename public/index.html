@@ -9,8 +9,9 @@
 </head>
 
 <body>
-    <button hx-post="/shutdown">Shutdown the network</button>
-    <div hx-get="/node-status" hx-trigger="every 1s"></div>
+    <div hx-get="/node-status" hx-trigger="load, every 1s"></div>
+    <p><a class="file" href="/file/chainspec.toml">Show the chainspec</a></p>
+    <button hx-post="/shutdown" hx-target="body">Shut the network down</button>
 </body>
 
 </html>

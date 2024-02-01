@@ -11,10 +11,10 @@ async fn main() -> cnut::error::Result<()> {
         .await?;
 
     Network::new()
-        //.with(5 * Node::validator(artifacts.clone()).config("../config.toml"))
         .with(5 * Node::validator(artifacts.clone()).name("Alice"))
         .with(Node::validator(artifacts.clone()).name("Bob"))
         .with(Node::validator(artifacts.clone()))
+        //.with(5 * Node::validator(artifacts.clone()).config("../config.toml"))
         //.with(15 * Node::keep_up(artifacts.clone()))
         //.with(Chainspec::from(artifacts))
         .run()

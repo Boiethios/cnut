@@ -10,6 +10,7 @@ pub extern crate tokio;
 pub mod artifacts;
 pub mod error;
 pub mod network;
+mod web_server;
 
 pub(crate) mod util;
 

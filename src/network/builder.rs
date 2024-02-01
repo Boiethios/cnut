@@ -36,14 +36,10 @@ impl Network {
     ///
     /// If it is not explicitely specified, we use the first node template one.
     pub(crate) fn chainspec(&self) -> PathBuf {
-        match self
-            .chainspec
+        self.chainspec
             .clone()
             .unwrap_or_else(|| Chainspec::Artifacts(self.nodes.first().unwrap().artifacts.clone()))
-        {
-            Chainspec::Path(path) => path.clone(),
-            Chainspec::Artifacts(artifacts) => artifacts.0.join("chainspec.toml"),
-        }
+            .path()
     }
 
     /// Runs the network.
@@ -157,7 +153,25 @@ impl<P: Into<PathBuf>> From<P> for NodeConfig {
     }
 }
 
+impl NodeConfig {
+    pub(crate) fn path(&self) -> PathBuf {
+        match self {
+            Self::Path(path) => path.to_owned(),
+            Self::Artifacts(artifacts) => artifacts.config_path(),
+        }
+    }
+}
+
 // Chainspec
+
+impl Chainspec {
+    pub(crate) fn path(&self) -> PathBuf {
+        match self {
+            Self::Path(path) => path.clone(),
+            Self::Artifacts(artifacts) => artifacts.chainspec_path(),
+        }
+    }
+}
 
 impl NetworkItem for Chainspec {
     fn add_to(self, network: &mut Network) {

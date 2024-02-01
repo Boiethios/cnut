@@ -67,6 +67,16 @@ impl Artifacts {
     pub fn from_path<P: Into<PathBuf>>(path: P) -> Self {
         Self(path.into())
     }
+
+    /// Returns the chainspec path from these artifacts.
+    pub fn chainspec_path(&self) -> PathBuf {
+        self.0.join("chainspec.toml")
+    }
+
+    /// Returns the config path from these artifacts.
+    pub fn config_path(&self) -> PathBuf {
+        self.0.join("config.toml")
+    }
 }
 
 impl ArtifactsBuilder {

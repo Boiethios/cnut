@@ -1,9 +1,10 @@
-use crate::network::web_server::{AppNode, AppState};
+use crate::web_server::{AppNode, AppState};
 use axum::extract::State;
 use futures::FutureExt;
 use maud::html;
 use reqwest::Client;
 use serde::Deserialize;
+use std::collections::HashMap;
 use tokio::task::JoinSet;
 
 struct Status {
@@ -20,9 +21,11 @@ pub async fn node_status(State(state): State<AppState>) -> String {
         Ok(status) => html! {
             table {
                 tr {
-                    th{"Name"} th{"Era ID"} th{"Height"}
+                    th{"Name"} th{"Era ID"} th{"Height"} th{"Config File"}
                 }
                 @for status in &status {
+                    @let path = format!("/file/{}/config.toml", status.name);
+                    //state.nodes[&status.name].path.join("config.toml");
                     tr {
                         td{(status.name)}
                         @if status.running == false {
@@ -34,6 +37,7 @@ pub async fn node_status(State(state): State<AppState>) -> String {
                             td{"--"}
                             td{"--"}
                         }
+                        td{a .file href=(path) {"config.toml"}}
                     }
                 }
             }
@@ -42,13 +46,13 @@ pub async fn node_status(State(state): State<AppState>) -> String {
     .into()
 }
 
-async fn gather_info(nodes: &[AppNode]) -> Result<Vec<Status>, ()> {
+async fn gather_info(nodes: &HashMap<String, AppNode>) -> Result<Vec<Status>, ()> {
     let mut requests = JoinSet::new();
     let mut result = Vec::new();
     let client = Client::new();
 
-    for node in nodes {
-        let name = node.name.clone();
+    for (name, node) in nodes {
+        let name = name.clone();
         requests.spawn(
             client
                 .get(format!("http://127.0.0.1:{}/status", node.rest_port))

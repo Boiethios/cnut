@@ -1,4 +1,4 @@
-use crate::web_server::AppState;
+use crate::web_app::AppState;
 use axum::{
     extract::{Path as AxumPath, State as AxumState},
     http::StatusCode,
@@ -11,7 +11,7 @@ pub async fn static_file(
     AxumState(state): AxumState<AppState>,
     AxumPath(path): AxumPath<PathBuf>,
 ) -> Result<Html<String>, (StatusCode, &'static str)> {
-    let path = state.running_dir.join(path);
+    let path = state.base_dir.join(path);
 
     let content = fs::read_to_string(&path)
         .await

@@ -45,13 +45,6 @@ pub enum Error {
         io_err: IoError,
     },
 
-    /// Only the table type (key/value) can be updated in the TOML files.
-    #[error("failed updating the non-table type: {value:?}")]
-    TomlEdit {
-        /// The faulty value, which was expected to be a table.
-        value: toml::Value,
-    },
-
     /// A read TOML file was invalid.
     #[error(transparent)]
     TomlParsing(#[from] toml::de::Error),
@@ -115,7 +108,6 @@ impl fmt::Debug for Error {
                 .field("description", description)
                 .field("io_err", io_err)
                 .finish(),
-            Self::TomlEdit { value } => f.debug_struct("TomlEdit").field("value", value).finish(),
             Self::TomlParsing(e) => write!(f, "TomlParsing({e:?})"),
             Self::DerEncoding(e) => write!(f, "DerEncoding({e:?})"),
             Self::Ed25519(e) => write!(f, "Ed25519({e:?})"),

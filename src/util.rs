@@ -4,8 +4,8 @@ mod dir;
 pub use dir::cache;
 pub mod crypto;
 
-use crate::error::{Error, ProcessError, Result};
-use std::{collections::HashMap, ffi::OsStr, path::Path, process::Output};
+use crate::error::{ProcessError, Result};
+use std::{ffi::OsStr, path::Path, process::Output};
 use tokio::process::Command;
 
 pub trait ProcessOutputExt {
@@ -22,20 +22,47 @@ impl ProcessOutputExt for Output {
     }
 }
 
-macro_rules! map {
-    () => { std::collections::HashMap::new() };
-    ( $first_key:expr => $first_value:expr $( , $key:expr => $value:expr )* $(,)? ) => {{
-        let mut map = std::collections::HashMap::new();
-        // There is no reason to add twice the same key.
-        // Since it's used for testing, we can panic in such a case:
-        assert!(map.insert($first_key, $first_value).is_none());
+pub(crate) fn create_update_table(toml: &mut toml::Value, args: &[&str], value: toml::Value) {
+    match args {
+        [] => *toml = value,
+        [arg, rest @ ..] => {
+            if let toml::Value::Table(table) = toml {
+                let toml = match table.entry(arg.to_owned()) {
+                    toml::map::Entry::Vacant(vacant) => vacant.insert(toml::Table::new().into()),
+                    toml::map::Entry::Occupied(occupied) => occupied.into_mut(),
+                };
+
+                create_update_table(toml, rest, value)
+            } else {
+                panic!("{arg:?} is not the key for a table")
+            }
+        }
+    }
+}
+
+/// Creates a TOML map.
+macro_rules! toml_map {
+    () => { toml::Table::new() };
+    ( $( $first_keys:expr ),+ => $first_value:expr $( , $( $keys:expr ),+ => $value:expr )* $(,)? ) => {{
+        let mut map = toml::Table::new().into();
+        // There is no reason to add twice the same key. In such a case, this
+        // is treated as a bug.
+        crate::util::create_update_table(&mut map, [$(
+            $first_keys,
+        )+].as_ref(), toml::Value::from($first_value));
         $(
-            assert!(map.insert($key, $value).is_none());
-        )*
-        map
+            crate::util::create_update_table(&mut map, [$(
+                $keys,
+            )+].as_ref(), toml::Value::from($value));
+        )+
+
+        match map {
+            toml::Value::Table(table) => table,
+            _ => unreachable!("map is a table"),
+        }
     }};
 }
-pub(crate) use map;
+pub(crate) use toml_map;
 
 pub async fn spawn_process<S: AsRef<OsStr>>(
     path: impl AsRef<Path>,
@@ -94,28 +121,29 @@ impl LettersGen {
 }
 
 /// Update the given paths of a TOML file with the given value.
-pub fn update_toml(
-    mut content: toml::Value,
-    updates: HashMap<&[&str], toml::Value>,
-) -> Result<toml::Value> {
-    for (keys, value) in updates {
-        let leaf = keys.iter().try_fold(&mut content, |node, &key| {
-            // If the key exist, just return the value at the key.
-            if node.get(key).is_some() {
-                Ok(node.get_mut(key).unwrap())
-            // Otherwise, try to insert it:
-            } else if let Some(slot) = node.as_table_mut() {
-                slot.insert(key.to_owned(), toml::map::Map::new().into());
-                Ok(node.get_mut(key).unwrap())
-            // If we cannot insert it, return an error: not a table:
-            } else {
-                Err(Error::TomlEdit {
-                    value: node.clone(),
-                })
+pub fn update_toml(mut content: toml::Value, updates: toml::Table) -> toml::Value {
+    pub fn merge_toml_value(base: &mut toml::Value, other: toml::Value) {
+        match (base, other) {
+            (toml::Value::Table(base_table), toml::Value::Table(other_table)) => {
+                // Update the base table, by joining both, merging in the values from `other_value` on conflict.
+                for (key, value) in other_table {
+                    match base_table.entry(key) {
+                        toml::map::Entry::Vacant(vacant) => {
+                            vacant.insert(value);
+                        }
+                        toml::map::Entry::Occupied(occupied) => {
+                            let old = occupied.into_mut();
+                            merge_toml_value(old, value);
+                        }
+                    }
+                }
             }
-        })?;
-        *leaf = value;
+            // Any other value just results in a replacement.
+            (base, other) => *base = other,
+        }
     }
 
-    Ok(content)
+    merge_toml_value(&mut content, updates.into());
+
+    content
 }

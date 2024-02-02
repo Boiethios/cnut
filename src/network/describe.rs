@@ -1,26 +1,27 @@
+use super::PreparedNetwork;
 use crate::{artifacts::Artifacts, error::Result};
 use sealed::NetworkItem;
 use std::{ops, path::PathBuf};
 
 /// The notwork. Add the nodes, and run it.
 #[derive(Debug, Clone)]
-pub struct Network {
-    pub(crate) nodes: Vec<Node>,
+pub struct NetworkBuilder {
+    pub(super) nodes: Vec<Node>,
     /// Chainspec for the nodes. If it is not specified, the one from the first
     /// available node with be taken.
-    pub(crate) chainspec: Option<Chainspec>,
+    pub(super) chainspec: Option<Chainspec>,
 }
 
 mod sealed {
     pub trait NetworkItem {
-        fn add_to(self, network: &mut super::Network);
+        fn add_to(self, network: &mut super::NetworkBuilder);
     }
 }
 
-impl Network {
+impl NetworkBuilder {
     /// Creates a new `Network`.
     pub fn new() -> Self {
-        Network {
+        NetworkBuilder {
             nodes: Vec::new(),
             chainspec: None,
         }
@@ -43,8 +44,8 @@ impl Network {
     }
 
     /// Runs the network.
-    pub async fn run(self) -> Result<()> {
-        super::run_network(self).await
+    pub async fn prepare(self) -> Result<PreparedNetwork> {
+        super::prepare_network(self).await
     }
 
     /// Returns the amount of nodes in the network.
@@ -85,7 +86,7 @@ pub enum NodeConfig {
 // Node
 
 impl NetworkItem for Node {
-    fn add_to(self, network: &mut Network) {
+    fn add_to(self, network: &mut NetworkBuilder) {
         network.nodes.push(self);
     }
 }
@@ -174,7 +175,7 @@ impl Chainspec {
 }
 
 impl NetworkItem for Chainspec {
-    fn add_to(self, network: &mut Network) {
+    fn add_to(self, network: &mut NetworkBuilder) {
         network.chainspec = Some(self);
     }
 }

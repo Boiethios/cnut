@@ -10,14 +10,18 @@ async fn main() -> cnut::error::Result<()> {
         .build()
         .await?;
 
-    Network::new()
+    let _network = NetworkBuilder::new()
         .with(5 * Node::validator(artifacts.clone()).name("Alice"))
         .with(Node::validator(artifacts.clone()).name("Bob"))
         .with(Node::validator(artifacts.clone()))
         //.with(5 * Node::validator(artifacts.clone()).config("../config.toml"))
         //.with(15 * Node::keep_up(artifacts.clone()))
         //.with(Chainspec::from(artifacts))
+        .prepare()
+        .await?
         .run()
+        .await?
+        .serve_web_app_and_wait()
         .await?;
 
     Ok(())

@@ -1,10 +1,9 @@
-use crate::web_server::{AppNode, AppState};
+use crate::{network::RunningNode, web_app::AppState};
 use axum::extract::State;
 use futures::FutureExt;
 use maud::html;
 use reqwest::Client;
 use serde::Deserialize;
-use std::collections::HashMap;
 use tokio::task::JoinSet;
 
 struct Status {
@@ -46,13 +45,13 @@ pub async fn node_status(State(state): State<AppState>) -> String {
     .into()
 }
 
-async fn gather_info(nodes: &HashMap<String, AppNode>) -> Result<Vec<Status>, ()> {
+async fn gather_info(nodes: &[RunningNode]) -> Result<Vec<Status>, ()> {
     let mut requests = JoinSet::new();
     let mut result = Vec::new();
     let client = Client::new();
 
-    for (name, node) in nodes {
-        let name = name.clone();
+    for node in nodes {
+        let name = node.name.clone();
         requests.spawn(
             client
                 .get(format!("http://127.0.0.1:{}/status", node.rest_port))

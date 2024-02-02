@@ -3,18 +3,19 @@
 
 use crate::{
     error::{Error, Result},
-    network::{Network, RunningNode},
+    network::{run_network, NetworkBuilder, RunningNetwork},
     util::{
-        crypto::{self, generate_pair},
-        map, update_toml, LettersGen, Spinner,
+        crypto::{self, generate_pair, PublicKey},
+        toml_map, update_toml, LettersGen, Spinner,
     },
 };
 use std::{
-    collections::HashMap,
-    path::Path,
+    path::{Path, PathBuf},
+    rc::Rc,
     str::FromStr as _,
     time::{Duration, SystemTime},
 };
+use tempfile::TempDir;
 use tokio::fs;
 
 const BASE_BIND_ADDRESS: u16 = 34000;
@@ -23,7 +24,37 @@ const BASE_SPEC_ADDRESS: u16 = 6666;
 const BASE_REST_ADDRESS: u16 = 8888;
 const BASE_EVENT_STREAM_ADDRESS: u16 = 9999;
 
-pub async fn prepare_nodes(network: Network, root_running_dir: &Path) -> Result<Vec<RunningNode>> {
+///TODO
+#[derive(Clone, Debug)]
+pub struct PreparedNetwork {
+    pub(super) nodes: Vec<PreparedNode>,
+    pub(super) base_dir: Rc<tempfile::TempDir>,
+}
+
+/// Internal format more suitable than the public one from the builder.
+#[derive(Clone, Debug)]
+pub struct PreparedNode {
+    /// Path where the node will run, with the config.
+    pub(super) running_path: PathBuf,
+    /// Path of the directory with binaries (node and wasm).
+    pub(super) bin_path: PathBuf,
+    pub(super) name: String,
+    pub(super) public_key: PublicKey,
+    pub(super) rpc_port: u16,
+    pub(super) rest_port: u16,
+    pub(super) validator: bool,
+}
+
+impl PreparedNetwork {
+    /// Runs the network now that it is prepared.
+    pub async fn run(self) -> Result<RunningNetwork> {
+        run_network(self).await
+    }
+}
+
+pub async fn prepare_network(network: NetworkBuilder) -> Result<PreparedNetwork> {
+    let base_dir = create_temp_dir()?;
+    let root_running_dir = base_dir.path();
     let mut nodes = Vec::new();
     let mut conf_names = LettersGen::new();
     let rng = &mut rand::thread_rng();
@@ -37,9 +68,9 @@ pub async fn prepare_nodes(network: Network, root_running_dir: &Path) -> Result<
     write_chainspec(
         network.chainspec(),
         &chainspec_path,
-        map! {
-            ["protocol", "activation_point"].as_ref() => millis_from_now(1000),
-            ["protocol", "version"].as_ref() => "1.0.0".into(),
+        toml_map! {
+            "protocol", "activation_point" => millis_from_now(1000),
+            "protocol", "version" => "1.0.0",
         },
     )
     .await?;
@@ -111,14 +142,14 @@ pub async fn prepare_nodes(network: Network, root_running_dir: &Path) -> Result<
             write_config(
                 &config_path,
                 running_path.join("config.toml"),
-                map! {
-                    ["network", "bind_address"].as_ref() => format!("0.0.0.0:{}", BASE_BIND_ADDRESS + index).into(),
-                    ["network", "known_addresses"].as_ref() => known_addresses.clone().into(),
-                    ["rpc_server", "address"].as_ref() => format!("0.0.0.0:{rpc_port}").into(),
-                    ["speculative_exec_server", "address"].as_ref() => format!("0.0.0.0:{}", BASE_SPEC_ADDRESS + index).into(),
-                    ["rest_server", "address"].as_ref() => format!("0.0.0.0:{rest_port}").into(),
-                    ["event_stream_server", "address"].as_ref() => format!("0.0.0.0:{}", BASE_EVENT_STREAM_ADDRESS + index).into(),
-                    ["storage", "path"].as_ref() => "./node-storage".into(),
+                toml_map! {
+                    "network", "bind_address" => format!("0.0.0.0:{}", BASE_BIND_ADDRESS + index),
+                    "network", "known_addresses" => known_addresses.clone(),
+                    "rpc_server", "address" => format!("0.0.0.0:{rpc_port}"),
+                    "speculative_exec_server", "address" => format!("0.0.0.0:{}", BASE_SPEC_ADDRESS + index),
+                    "rest_server", "address" => format!("0.0.0.0:{rest_port}"),
+                    "event_stream_server", "address" => format!("0.0.0.0:{}", BASE_EVENT_STREAM_ADDRESS + index),
+                    "storage", "path" => "./node-storage",
                 },
             )
             .await?;
@@ -144,7 +175,7 @@ pub async fn prepare_nodes(network: Network, root_running_dir: &Path) -> Result<
                     io_err,
                 })?;
 
-            nodes.push(RunningNode {
+            nodes.push(PreparedNode {
                 running_path,
                 bin_path: artifacts.0.clone(),
                 name,
@@ -168,13 +199,14 @@ pub async fn prepare_nodes(network: Network, root_running_dir: &Path) -> Result<
     })?;
 
     spinner.success();
-    Ok(nodes)
+
+    Ok(PreparedNetwork { base_dir, nodes })
 }
 
 async fn write_chainspec(
     src: impl AsRef<Path>,
     dest: impl AsRef<Path>,
-    updates: HashMap<&[&str], toml::Value>,
+    updates: toml::Table,
 ) -> Result<()> {
     let (src, dest) = (src.as_ref(), dest.as_ref());
 
@@ -190,7 +222,7 @@ async fn write_chainspec(
 
     fs::write(
         dest,
-        toml::to_string_pretty(&update_toml(chainspec, updates)?)
+        toml::to_string_pretty(&update_toml(chainspec, updates))
             .expect("TOML serialization failed"),
     )
     .await
@@ -205,7 +237,7 @@ async fn write_chainspec(
 async fn write_config(
     src: impl AsRef<Path>,
     dest: impl AsRef<Path>,
-    updates: HashMap<&[&str], toml::Value>,
+    updates: toml::Table,
 ) -> Result<()> {
     let (src, dest) = (src.as_ref(), dest.as_ref());
 
@@ -221,7 +253,7 @@ async fn write_config(
 
     fs::write(
         dest,
-        toml::to_string_pretty(&update_toml(config, updates)?).expect("TOML serialization failed"),
+        toml::to_string_pretty(&update_toml(config, updates)).expect("TOML serialization failed"),
     )
     .await
     .map_err(|io_err| Error::FileOperation {
@@ -233,14 +265,14 @@ async fn write_config(
 }
 
 /// A timestamp of the moment in `n` seconds from now.
-fn millis_from_now(n: u64) -> toml::Value {
+fn millis_from_now(n: u64) -> String {
     let value = SystemTime::now() + Duration::from_millis(n);
 
-    toml::Value::String(humantime::format_rfc3339_millis(value).to_string())
+    humantime::format_rfc3339_millis(value).to_string()
 }
 
 /// Returns a TOML data structure with the accounts.
-fn accounts(nodes: &[RunningNode]) -> toml::Value {
+fn accounts(nodes: &[PreparedNode]) -> toml::Value {
     use toml::{map::Map, Value};
 
     let accounts = nodes
@@ -273,4 +305,13 @@ fn accounts(nodes: &[RunningNode]) -> toml::Value {
     };
 
     Value::Table(accounts)
+}
+
+fn create_temp_dir() -> Result<Rc<TempDir>> {
+    let temp_dir = Rc::new(tempfile::tempdir().map_err(|io_err| Error::FileOperation {
+        description: format!("creating the temporary directory"),
+        io_err,
+    })?);
+
+    Ok(temp_dir)
 }

@@ -10,7 +10,7 @@ pub extern crate tokio;
 pub mod artifacts;
 pub mod error;
 pub mod network;
-mod web_server;
+pub(crate) mod web_app;
 
 pub(crate) mod util;
 
@@ -18,7 +18,7 @@ pub(crate) mod util;
 pub mod prelude {
     pub use crate::{
         artifacts::Artifacts,
-        network::{Chainspec, Network, Node},
+        network::{Chainspec, NetworkBuilder, Node},
     };
     pub use toml::Value as TomlValue;
 }

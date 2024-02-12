@@ -14,12 +14,12 @@ async fn main() -> cnut::error::Result<()> {
         .with(5 * Node::validator(artifacts.clone()).name("Alice"))
         .with(Node::validator(artifacts.clone()).name("Bob"))
         .with(Node::validator(artifacts.clone()))
+        .with(Chainspec::from(artifacts))
         //.with(5 * Node::validator(artifacts.clone()).config("../config.toml"))
         //.with(15 * Node::keep_up(artifacts.clone()))
-        //.with(Chainspec::from(artifacts))
         .prepare()
         .await?
-        .run()
+        .start_all()
         .await?
         .serve_web_app_and_wait()
         .await?;

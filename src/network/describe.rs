@@ -1,7 +1,8 @@
-use super::PreparedNetwork;
 use crate::{artifacts::Artifacts, error::Result};
 use sealed::NetworkItem;
 use std::{ops, path::PathBuf};
+
+use super::RunningNetwork;
 
 /// The notwork. Add the nodes, and run it.
 #[derive(Debug, Clone)]
@@ -43,8 +44,10 @@ impl NetworkBuilder {
             .path()
     }
 
-    /// Runs the network.
-    pub async fn prepare(self) -> Result<PreparedNetwork> {
+    /// Prepares the network so that it is ready to start. Concretely, that
+    /// means copying the files to their right location while patching the
+    /// config and chainspec TOMLs with the correct values.
+    pub async fn prepare(self) -> Result<RunningNetwork> {
         super::prepare_network(self).await
     }
 

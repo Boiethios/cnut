@@ -51,10 +51,10 @@ async fn gather_info(nodes: &[RunningNode]) -> Result<Vec<Status>, ()> {
     let client = Client::new();
 
     for node in nodes {
-        let name = node.name.clone();
+        let name = node.name().to_owned();
         requests.spawn(
             client
-                .get(format!("http://127.0.0.1:{}/status", node.rest_port))
+                .get(format!("http://127.0.0.1:{}/status", node.rest_port()))
                 .send()
                 .map(move |response| (name, response)),
         );

@@ -17,7 +17,8 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use std::{path::PathBuf, sync::Arc};
+use futures::FutureExt;
+use std::{path::PathBuf, time::Duration};
 use tokio::spawn;
 use tower_http::services::ServeFile;
 
@@ -35,6 +36,7 @@ pub async fn serve(nodes: Vec<RunningNode>, base_dir: PathBuf) -> Result<()> {
     let app = Router::new()
         .route_service("/", ServeFile::new("public/index.html"))
         .route_service("/index.css", ServeFile::new("public/index.css"))
+        .route_service("/favicon.ico", ServeFile::new("public/favicon.ico"))
         .nest(
             "/file",
             Router::new().route("/*path", get(endpoints::static_file)),
@@ -44,29 +46,25 @@ pub async fn serve(nodes: Vec<RunningNode>, base_dir: PathBuf) -> Result<()> {
         .with_state(state);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:6532").await.unwrap();
 
-    let task = async move {
-        axum::serve(listener, app)
-            .await
-            .map_err(Error::StartingServerWeb)
-    };
-
-    spawn(task);
+    let handle = spawn(async move {
+        axum::serve(listener, app).await.map_err(|e| {
+            log::error!("Monitoring web server crashed: {e:?}");
+            Error::StartingServerWeb(e)
+        })
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    if let Some(Ok(result)) = handle.now_or_never() {
+        result?;
+    }
 
     println!("Web app at http://127.0.0.1:6532");
     Ok(())
 }
 
-async fn shutdown(AxumState(mut state): AxumState<AppState>) -> &'static str {
+async fn shutdown(AxumState(state): AxumState<AppState>) -> &'static str {
     log::debug!("Kill all nodes signal sent");
-    for node in &mut state.nodes {
-        if let Some(sender) = node.kill_sender.lock().await.take() {
-            if let Err(e) = sender.send(()) {
-                log::warn!(
-                    "Kill signal could not be send to {}, maybe it has already shut down: {e:?}",
-                    node.name
-                )
-            }
-        }
+    for node in &state.nodes {
+        let _ = node.kill().await;
     }
 
     "Network has shut down"

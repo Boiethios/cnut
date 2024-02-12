@@ -3,56 +3,22 @@
 
 use crate::{
     error::{Error, Result},
-    network::{run_network, NetworkBuilder, RunningNetwork},
+    network::{NetworkBuilder, RunningNetwork, RunningNode},
     util::{
-        crypto::{self, generate_pair, PublicKey},
+        crypto::{self, generate_pair},
         toml_map, update_toml, LettersGen, Spinner,
     },
 };
 use std::{
-    path::{Path, PathBuf},
-    rc::Rc,
+    path::Path,
     str::FromStr as _,
+    sync::Arc,
     time::{Duration, SystemTime},
 };
 use tempfile::TempDir;
 use tokio::fs;
 
-const BASE_BIND_ADDRESS: u16 = 34000;
-const BASE_RPC_ADDRESS: u16 = 7777;
-const BASE_SPEC_ADDRESS: u16 = 6666;
-const BASE_REST_ADDRESS: u16 = 8888;
-const BASE_EVENT_STREAM_ADDRESS: u16 = 9999;
-
-///TODO
-#[derive(Clone, Debug)]
-pub struct PreparedNetwork {
-    pub(super) nodes: Vec<PreparedNode>,
-    pub(super) base_dir: Rc<tempfile::TempDir>,
-}
-
-/// Internal format more suitable than the public one from the builder.
-#[derive(Clone, Debug)]
-pub struct PreparedNode {
-    /// Path where the node will run, with the config.
-    pub(super) running_path: PathBuf,
-    /// Path of the directory with binaries (node and wasm).
-    pub(super) bin_path: PathBuf,
-    pub(super) name: String,
-    pub(super) public_key: PublicKey,
-    pub(super) rpc_port: u16,
-    pub(super) rest_port: u16,
-    pub(super) validator: bool,
-}
-
-impl PreparedNetwork {
-    /// Runs the network now that it is prepared.
-    pub async fn run(self) -> Result<RunningNetwork> {
-        run_network(self).await
-    }
-}
-
-pub async fn prepare_network(network: NetworkBuilder) -> Result<PreparedNetwork> {
+pub async fn prepare_network(network: NetworkBuilder) -> Result<RunningNetwork> {
     let base_dir = create_temp_dir()?;
     let root_running_dir = base_dir.path();
     let mut nodes = Vec::new();
@@ -69,6 +35,7 @@ pub async fn prepare_network(network: NetworkBuilder) -> Result<PreparedNetwork>
         network.chainspec(),
         &chainspec_path,
         toml_map! {
+            "core", "validator_slots" => network.amount_nodes() as i64,
             "protocol", "activation_point" => millis_from_now(1000),
             "protocol", "version" => "1.0.0",
         },
@@ -83,11 +50,10 @@ pub async fn prepare_network(network: NetworkBuilder) -> Result<PreparedNetwork>
             io_err,
         })?;
 
-    let known_addresses: Vec<_> = (BASE_BIND_ADDRESS
-        ..BASE_BIND_ADDRESS + network.amount_nodes() as u16)
+    let known_addresses: Vec<_> = (port::bind(0)..port::bind(network.amount_nodes()))
         .map(|i| toml::Value::from(format!("127.0.0.1:{i}")))
         .collect();
-    let mut index = 0u16..;
+    let mut index = 0..;
 
     //TODO parallelize
     for super::Node {
@@ -117,7 +83,7 @@ pub async fn prepare_network(network: NetworkBuilder) -> Result<PreparedNetwork>
                 .collect(),
         };
 
-        for (running_path, name) in node_paths_and_names {
+        for (running_path, name) in node_paths_and_names.into_iter() {
             let (public_key, secret_key) = generate_pair(rng);
 
             // Create the directory:
@@ -137,18 +103,19 @@ pub async fn prepare_network(network: NetworkBuilder) -> Result<PreparedNetwork>
                     io_err,
                 })?;
             let index = index.next().unwrap();
-            let rpc_port = BASE_RPC_ADDRESS + index;
-            let rest_port = BASE_REST_ADDRESS + index;
+            let rpc_port = port::rpc(index);
+            let rest_port = port::rest(index);
+            let speculative_execution_port = port::spec(index);
             write_config(
                 &config_path,
                 running_path.join("config.toml"),
                 toml_map! {
-                    "network", "bind_address" => format!("0.0.0.0:{}", BASE_BIND_ADDRESS + index),
+                    "network", "bind_address" => format!("0.0.0.0:{}", port::bind(index)),
                     "network", "known_addresses" => known_addresses.clone(),
                     "rpc_server", "address" => format!("0.0.0.0:{rpc_port}"),
-                    "speculative_exec_server", "address" => format!("0.0.0.0:{}", BASE_SPEC_ADDRESS + index),
+                    "speculative_exec_server", "address" => format!("0.0.0.0:{}", speculative_execution_port),
                     "rest_server", "address" => format!("0.0.0.0:{rest_port}"),
-                    "event_stream_server", "address" => format!("0.0.0.0:{}", BASE_EVENT_STREAM_ADDRESS + index),
+                    "event_stream_server", "address" => format!("0.0.0.0:{}", port::event_stream(index)),
                     "storage", "path" => "./node-storage",
                 },
             )
@@ -175,14 +142,17 @@ pub async fn prepare_network(network: NetworkBuilder) -> Result<PreparedNetwork>
                     io_err,
                 })?;
 
-            nodes.push(PreparedNode {
+            nodes.push(RunningNode {
                 running_path,
                 bin_path: artifacts.0.clone(),
                 name,
                 public_key,
+                validator,
                 rpc_port,
                 rest_port,
-                validator,
+                speculative_execution_port,
+                status: Default::default(),
+                kill_sender: Default::default(),
             });
         }
     }
@@ -200,7 +170,11 @@ pub async fn prepare_network(network: NetworkBuilder) -> Result<PreparedNetwork>
 
     spinner.success();
 
-    Ok(PreparedNetwork { base_dir, nodes })
+    Ok(RunningNetwork {
+        base_dir,
+        nodes,
+        tasks: Default::default(),
+    })
 }
 
 async fn write_chainspec(
@@ -272,7 +246,7 @@ fn millis_from_now(n: u64) -> String {
 }
 
 /// Returns a TOML data structure with the accounts.
-fn accounts(nodes: &[PreparedNode]) -> toml::Value {
+fn accounts(nodes: &[RunningNode]) -> toml::Value {
     use toml::{map::Map, Value};
 
     let accounts = nodes
@@ -307,11 +281,39 @@ fn accounts(nodes: &[PreparedNode]) -> toml::Value {
     Value::Table(accounts)
 }
 
-fn create_temp_dir() -> Result<Rc<TempDir>> {
-    let temp_dir = Rc::new(tempfile::tempdir().map_err(|io_err| Error::FileOperation {
+fn create_temp_dir() -> Result<Arc<TempDir>> {
+    let temp_dir = Arc::new(tempfile::tempdir().map_err(|io_err| Error::FileOperation {
         description: format!("creating the temporary directory"),
         io_err,
     })?);
 
     Ok(temp_dir)
+}
+
+mod port {
+    const BASE_BIND_ADDRESS: u16 = 34000;
+    const BASE_SPEC_ADDRESS: u16 = 6666;
+    const BASE_RPC_ADDRESS: u16 = 7777;
+    const BASE_REST_ADDRESS: u16 = 8888;
+    const BASE_EVENT_STREAM_ADDRESS: u16 = 9999;
+
+    pub fn bind(index: usize) -> u16 {
+        BASE_BIND_ADDRESS + index as u16
+    }
+
+    pub fn spec(index: usize) -> u16 {
+        BASE_SPEC_ADDRESS + index as u16
+    }
+
+    pub fn rpc(index: usize) -> u16 {
+        BASE_RPC_ADDRESS + index as u16
+    }
+
+    pub fn rest(index: usize) -> u16 {
+        BASE_REST_ADDRESS + index as u16
+    }
+
+    pub fn event_stream(index: usize) -> u16 {
+        BASE_EVENT_STREAM_ADDRESS + index as u16
+    }
 }

@@ -10,73 +10,67 @@
 //! - The node keys.
 
 use crate::{
-    error::Result,
-    network::{PreparedNetwork, PreparedNode},
-    util::crypto::PublicKey,
+    error::{Error, Result},
+    network::{NodeStatus, RunningNetwork, RunningNode, RunningNodeSet},
     web_app,
 };
-use std::{
-    path::PathBuf,
-    process::{ExitStatus, Stdio},
-    rc::Rc,
-    sync::Arc,
-};
-use tokio::{
-    process::Command,
-    sync::{oneshot, Mutex},
-    task::JoinSet,
-};
-
-type RunningNodeSet = JoinSet<(String, PublicKey)>;
-
-///TODO
-#[derive(Debug)]
-pub struct RunningNetwork {
-    pub(crate) nodes: Vec<RunningNode>,
-    pub(crate) tasks: RunningNodeSet,
-    pub(crate) base_dir: Rc<tempfile::TempDir>,
-}
-
-/// Internal format more suitable than the public one from the builder.
-#[derive(Clone, Debug)]
-pub struct RunningNode {
-    /// Path where the node will run, with the config.
-    pub(crate) running_path: PathBuf,
-    /// Path of the directory with binaries (node and wasm).
-    pub(crate) bin_path: PathBuf,
-    pub(crate) name: String,
-    pub(crate) public_key: PublicKey,
-    pub(crate) rpc_port: u16,
-    pub(crate) rest_port: u16,
-    pub(crate) validator: bool,
-
-    pub(crate) kill_sender: Arc<Mutex<Option<oneshot::Sender<()>>>>,
-}
-
-pub async fn run_network(network: PreparedNetwork) -> Result<RunningNetwork> {
-    let PreparedNetwork { nodes, base_dir } = network;
-    let mut tasks = JoinSet::new();
-    let mut nodes: Vec<_> = nodes.clone().into_iter().map(RunningNode::from).collect();
-
-    for node in &mut nodes {
-        node.run(&mut tasks).await?;
-    }
-
-    let network = RunningNetwork {
-        nodes,
-        tasks,
-        base_dir,
-    };
-
-    Ok(network)
-}
+use std::process::{ExitStatus, Stdio};
+use tokio::{process::Command, sync::oneshot};
 
 impl RunningNetwork {
-    /// Wait for the network to stop.
-    pub async fn wait(mut self) -> Result<()> {
-        while let Some(result) = self.tasks.join_next().await {
+    /// Starts all the nodes.
+    pub async fn start_all(&self) -> Result<&Self> {
+        let mut set = self.tasks.lock().await;
+        for node in &self.nodes {
+            node.clone().run(&mut *set).await?;
+        }
+        drop(set);
+
+        Ok(self)
+    }
+
+    /// Shuts the network down.
+    pub async fn stop_all(&self) -> Result<&Self> {
+        for node in &self.nodes {
+            node.clone().kill().await?;
+        }
+
+        Ok(self)
+    }
+
+    /// Starts the node with the provided name.
+    pub async fn start(&self, name: &str) -> Result<&Self> {
+        self.node_by_name(name)?
+            .run(&mut *self.tasks.lock().await)
+            .await?;
+
+        Ok(self)
+    }
+
+    /// Stops the node with the provided name.
+    pub async fn stop(&self, name: &str) -> Result<&Self> {
+        self.node_by_name(name)?.kill().await?;
+
+        Ok(self)
+    }
+
+    /// Wait for the network (all the nodes) to stop.
+    ///
+    /// Note that this will prevent any node to be started. Any attempt to do so
+    /// will deadlock the call.
+    pub async fn wait(&self) -> Result<()> {
+        while let Some(result) = self.tasks.lock().await.join_next().await {
             match result {
-                Ok((name, public_key)) => log::info!("Node {name} ({public_key}) has stopped"),
+                Ok((name, status)) => match self.node_by_name(&name) {
+                    Ok(node) => {
+                        log::info!(
+                            "Node {name} ({}) has stopped with status {status:?}",
+                            node.public_key
+                        );
+                        *node.status.lock().await = status;
+                    }
+                    Err(e) => log::warn!("Unknown node stopped (should not happen): {e:?}"),
+                },
                 Err(io_err) => log::warn!("Failed to join the process task: {io_err:?}"),
             }
         }
@@ -84,25 +78,35 @@ impl RunningNetwork {
         Ok(())
     }
 
-    /// Serves the web app for debugging
-    pub async fn serve_web_app_and_wait(self) -> Result<()> {
+    /// Serves the web app for debugging, then returns immediately (non-blocking).
+    pub async fn serve_web_app(&self) -> Result<()> {
+        web_app::serve(self.nodes.clone(), self.base_dir.path().to_owned()).await
+    }
+
+    /// Serves the web app for debugging, then wait for the network to stop.
+    pub async fn serve_web_app_and_wait(&self) -> Result<()> {
         web_app::serve(self.nodes.clone(), self.base_dir.path().to_owned()).await?;
         self.wait().await
     }
 
     /// Returns the node with the given `name`.
-    pub fn node_by_name(&self, name: &str) -> Option<&RunningNode> {
-        self.nodes.iter().find(|node| node.name == name)
+    pub fn node_by_name(&self, name: &str) -> Result<&RunningNode> {
+        self.nodes
+            .iter()
+            .find(|node| node.name == name)
+            .ok_or_else(|| Error::NodeNameNotFound(name.to_owned()))
     }
 
     /// Returns the node with the given `index`.
-    pub fn node_by_index(&self, index: usize) -> Option<&RunningNode> {
-        self.nodes.get(index)
+    pub fn node_by_index(&self, index: usize) -> Result<&RunningNode> {
+        self.nodes
+            .get(index)
+            .ok_or(Error::NodeIndexOutOfBounds(index))
     }
 }
 
 impl RunningNode {
-    async fn run(&mut self, set: &mut RunningNodeSet) -> Result<()> {
+    async fn run(&self, set: &mut RunningNodeSet) -> Result<()> {
         let (kill_sender, kill_receiver) = oneshot::channel();
         let node_path = self.bin_path.join("casper-node");
         let config_path = self.running_path.join("config.toml");
@@ -125,47 +129,47 @@ impl RunningNode {
         log::debug!("Node {} spawned successfully", self.name);
 
         let name = self.name.clone();
-        let public_key = self.public_key.clone();
         set.spawn(async move {
-            let result = tokio::select! {
-                exit_result = child.wait() => exit_result, // Normally this branch should never happen
-                _ = kill_receiver => child.kill().await.map(|()| ExitStatus::default()),
+            let (result, crash) = tokio::select! {
+                exit_result = child.wait() => (exit_result, true), // Early exit (error in the node for example)
+                _ = kill_receiver => (child.kill().await.map(|()| ExitStatus::default()), false),
             };
 
-            if let Err(io_err) = result {
+            if let Err(io_err) = result.as_ref() {
                 log::warn!("Child process {name:?} has errored: {io_err:?}");
             }
-            (name, public_key)
+            let status = if crash {
+                NodeStatus::Crashed(result)
+            } else {
+                NodeStatus::Stopped(result)
+            };
+            (name, status)
         });
 
-        let mut locked = self.kill_sender.lock().await;
-        *locked = Some(kill_sender);
+        *self.kill_sender.lock().await = Some(kill_sender);
+        *self.status.lock().await = NodeStatus::Running;
 
         Ok(())
     }
-}
 
-impl From<PreparedNode> for RunningNode {
-    fn from(
-        PreparedNode {
-            running_path,
-            bin_path,
-            name,
-            public_key,
-            rpc_port,
-            rest_port,
-            validator,
-        }: PreparedNode,
-    ) -> Self {
-        RunningNode {
-            running_path,
-            bin_path,
-            name,
-            public_key,
-            rpc_port,
-            rest_port,
-            validator,
-            kill_sender: Arc::new(Mutex::new(None)),
+    pub(crate) async fn kill(&self) -> Result<()> {
+        match self.kill_sender.lock().await.take() {
+            Some(kill_sender) => {
+                if let Err(()) = kill_sender.send(()) {
+                    log::warn!(
+                        "Kill signal could not be send to {}, maybe it has already shut down",
+                        self.name()
+                    )
+                }
+            }
+            None => log::warn!("The node was ordered to get killed, but it is not running"),
         }
+
+        Ok(())
+    }
+
+    /// Returns the current status for the node.
+    pub async fn status<'a>(&'a self) -> tokio::sync::MutexGuard<'a, NodeStatus> {
+        self.status.lock().await
     }
 }

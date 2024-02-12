@@ -1,7 +1,6 @@
 //! Holds all the error-related code.
 
-use core::fmt;
-use std::{io::Error as IoError, process::Output as ProcessOutput};
+use std::{fmt, io::Error as IoError, process::Output as ProcessOutput};
 use thiserror::Error;
 
 /// Main result type for this library.
@@ -60,6 +59,14 @@ pub enum Error {
     /// There were an error while starting the web server.
     #[error("Failed to start the web server: {:?}", .0)]
     StartingServerWeb(IoError),
+
+    /// There is no node with this name.
+    #[error("Node does not exist: {}", .0)]
+    NodeNameNotFound(String),
+
+    /// There is no node with this index.
+    #[error("Node does not exist: {}", .0)]
+    NodeIndexOutOfBounds(usize),
 }
 
 /// Error used to show the error a child process returned.
@@ -112,6 +119,8 @@ impl fmt::Debug for Error {
             Self::DerEncoding(e) => write!(f, "DerEncoding({e:?})"),
             Self::Ed25519(e) => write!(f, "Ed25519({e:?})"),
             Self::StartingServerWeb(e) => write!(f, "StartingServerWeb({e:?})"),
+            Self::NodeNameNotFound(name) => write!(f, "NodeNameNotFound({name})"),
+            Self::NodeIndexOutOfBounds(index) => write!(f, "NodeIndexOutOfBounds({index})"),
         }
     }
 }

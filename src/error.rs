@@ -130,12 +130,12 @@ impl fmt::Debug for ProcessError {
         match self {
             Self::FailedToSetupRust(ProcessOutput {
                 status,
-                stdout,
-                stderr: _,
+                stdout: _,
+                stderr,
             }) => write!(
                 f,
                 "FailedToSetupRust:\n\tStatus: {status:?}\n\tOutput:\n{}",
-                String::from_utf8_lossy(stdout)
+                String::from_utf8_lossy(stderr)
             ),
 
             Self::FailedToBuildNode(ProcessOutput {

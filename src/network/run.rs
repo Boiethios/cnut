@@ -80,12 +80,12 @@ impl RunningNetwork {
 
     /// Serves the web app for debugging, then returns immediately (non-blocking).
     pub async fn serve_web_app(&self) -> Result<()> {
-        web_app::serve(self.nodes.clone(), self.base_dir.path().to_owned()).await
+        web_app::serve(self.nodes.clone(), self.temp_directory.path().to_owned()).await
     }
 
     /// Serves the web app for debugging, then wait for the network to stop.
     pub async fn serve_web_app_and_wait(&self) -> Result<()> {
-        web_app::serve(self.nodes.clone(), self.base_dir.path().to_owned()).await?;
+        web_app::serve(self.nodes.clone(), self.temp_directory.path().to_owned()).await?;
         self.wait().await
     }
 
@@ -108,12 +108,12 @@ impl RunningNetwork {
 impl RunningNode {
     async fn run(&self, set: &mut RunningNodeSet) -> Result<()> {
         let (kill_sender, kill_receiver) = oneshot::channel();
-        let node_path = self.bin_path.join("casper-node");
-        let config_path = self.running_path.join("config.toml");
+        let node_path = self.artifact_dir.join("casper-node");
+        let config_path = self.data_dir.join("config.toml");
         let mut child = Command::new(&node_path)
             .arg("validator")
             .arg(&config_path)
-            .current_dir(&self.running_path)
+            .current_dir(&self.data_dir)
             // Remove the output:
             .stdout(Stdio::null())
             .spawn()

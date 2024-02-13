@@ -3,11 +3,12 @@ use derp::{Der, Tag};
 use ed25519_dalek::pkcs8::spki::der::pem;
 use hex_fmt::HexFmt;
 use rand::Rng;
-use std::{fmt, path::Path};
+use std::{fmt, path::Path, sync::Arc};
 use tokio::fs;
 
 const ED25519_OBJECT_IDENTIFIER: [u8; 3] = [43, 101, 112];
 const SECP256K1_OBJECT_IDENTIFIER: [u8; 5] = [43, 129, 4, 0, 10];
+const EC_PUBLIC_KEY_OBJECT_IDENTIFIER: [u8; 7] = [42, 134, 72, 206, 61, 2, 1];
 
 #[derive(Debug, Clone)]
 pub enum PublicKey {
@@ -17,12 +18,12 @@ pub enum PublicKey {
     Secp256k1(k256::ecdsa::VerifyingKey),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum SecretKey {
     /// Ed25519 public key.
-    Ed25519(ed25519_dalek::SigningKey),
+    Ed25519(Arc<ed25519_dalek::SigningKey>),
     /// secp256k1 public key.
-    Secp256k1(k256::ecdsa::SigningKey),
+    Secp256k1(Arc<k256::ecdsa::SigningKey>),
 }
 
 pub fn generate_pair(rng: &mut impl Rng) -> (PublicKey, SecretKey) {
@@ -34,7 +35,7 @@ pub fn generate_pair(rng: &mut impl Rng) -> (PublicKey, SecretKey) {
 
         (
             PublicKey::Ed25519(public_key),
-            SecretKey::Ed25519(secret_key),
+            SecretKey::Ed25519(Arc::new(secret_key)),
         )
     } else {
         let secret_key =
@@ -43,12 +44,78 @@ pub fn generate_pair(rng: &mut impl Rng) -> (PublicKey, SecretKey) {
 
         (
             PublicKey::Secp256k1(public_key),
-            SecretKey::Secp256k1(secret_key),
+            SecretKey::Secp256k1(Arc::new(secret_key)),
         )
     }
 }
 
+impl PublicKey {
+    pub async fn write_pem(&self, path: impl AsRef<Path>) -> Result<()> {
+        let pem_string = self.pem()?;
+        let path = path.as_ref();
+
+        fs::write(&path, pem_string)
+            .await
+            .map_err(|io_err| Error::FileOperation {
+                description: format!("cannot write the pem file {path:?}"),
+                io_err,
+            })?;
+
+        Ok(())
+    }
+
+    fn pem(&self) -> Result<String> {
+        let label = "PUBLIC KEY";
+
+        let result = pem::encode_string(label, pem::LineEnding::CRLF, &self.der()?)?;
+
+        Ok(result)
+    }
+
+    fn der(&self) -> Result<Vec<u8>> {
+        match self {
+            PublicKey::Ed25519(public_key) => {
+                // See https://tools.ietf.org/html/rfc8410#section-10.1
+                let mut encoded = vec![];
+                let mut der = Der::new(&mut encoded);
+                der.sequence(|der| {
+                    der.sequence(|der| der.oid(&ED25519_OBJECT_IDENTIFIER))?;
+                    der.bit_string(0, public_key.as_ref())
+                })?;
+                Ok(encoded)
+            }
+            PublicKey::Secp256k1(public_key) => {
+                // See https://www.secg.org/sec1-v2.pdf#subsection.C.3
+                let mut encoded = vec![];
+                let mut der = Der::new(&mut encoded);
+                der.sequence(|der| {
+                    der.sequence(|der| {
+                        der.oid(&EC_PUBLIC_KEY_OBJECT_IDENTIFIER)?;
+                        der.oid(&SECP256K1_OBJECT_IDENTIFIER)
+                    })?;
+                    der.bit_string(0, public_key.to_encoded_point(true).as_ref())
+                })?;
+                Ok(encoded)
+            }
+        }
+    }
+}
+
 impl SecretKey {
+    pub async fn write_pem(&self, path: impl AsRef<Path>) -> Result<()> {
+        let pem_string = self.pem()?;
+        let path = path.as_ref();
+
+        fs::write(&path, pem_string)
+            .await
+            .map_err(|io_err| Error::FileOperation {
+                description: format!("cannot write the pem file {path:?}"),
+                io_err,
+            })?;
+
+        Ok(())
+    }
+
     fn pem(&self) -> Result<String> {
         let label = match self {
             Self::Ed25519(_) => "PRIVATE KEY",
@@ -103,18 +170,4 @@ impl fmt::Display for PublicKey {
             PublicKey::Secp256k1(key) => write!(f, "02{}", HexFmt(key.to_sec1_bytes())),
         }
     }
-}
-
-pub async fn write_pem(secret_key: &SecretKey, path: impl AsRef<Path>) -> Result<()> {
-    let pem_string = secret_key.pem()?;
-    let path = path.as_ref();
-
-    fs::write(&path, pem_string)
-        .await
-        .map_err(|io_err| Error::FileOperation {
-            description: format!("cannot write the pem file {path:?}"),
-            io_err,
-        })?;
-
-    Ok(())
 }

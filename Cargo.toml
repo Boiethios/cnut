@@ -31,7 +31,7 @@ k256 = "0.13"
 axum = "0.7"
 maud = "0.26"
 reqwest = { version = "0.11", features = ["json"] }
-tower-http = { version = "0.5", features = ["fs"] }
+#tower-http = { version = "0.5", features = ["fs"] }
 
 [dependencies.tokio]
 version = "1"

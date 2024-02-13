@@ -37,7 +37,7 @@ impl NetworkBuilder {
     /// Returns the chainspec's full path.
     ///
     /// If it is not explicitely specified, we use the first node template one.
-    pub(crate) fn chainspec(&self) -> PathBuf {
+    pub(crate) fn chainspec_path(&self) -> PathBuf {
         self.chainspec
             .clone()
             .unwrap_or_else(|| Chainspec::Artifacts(self.nodes.first().unwrap().artifacts.clone()))
@@ -80,7 +80,7 @@ pub enum Chainspec {
 /// Where to find the node configuration.
 #[derive(Debug, Clone)]
 pub enum NodeConfig {
-    /// A path for the chainspec: `some/dir/Chainspec.toml`.
+    /// A path for the config: `some/dir/Config.toml`.
     Path(PathBuf),
     /// An [`Artifacts`] structure.
     Artifacts(Artifacts),

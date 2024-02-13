@@ -19,7 +19,7 @@ pub use describe::{Chainspec, NetworkBuilder, Node};
 pub(crate) use describe::NodeConfig;
 pub(crate) use prepare::prepare_network;
 
-use crate::util::crypto::PublicKey;
+use crate::util::crypto::{PublicKey, SecretKey};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -38,7 +38,7 @@ type RunningNodeSet = JoinSet<(String, NodeStatus)>;
 pub struct RunningNetwork {
     nodes: Vec<RunningNode>,
     tasks: Arc<Mutex<RunningNodeSet>>,
-    base_dir: Arc<tempfile::TempDir>,
+    temp_directory: Arc<tempfile::TempDir>,
 }
 
 /// A running node. It can be started, stopped or crashed.
@@ -48,12 +48,15 @@ pub struct RunningNetwork {
 #[derive(Clone, Debug)]
 pub struct RunningNode {
     /// Path where the node will run, with the config.
-    running_path: PathBuf,
+    data_dir: PathBuf,
     /// Path of the directory with binaries (node and wasm).
-    bin_path: PathBuf,
+    artifact_dir: PathBuf,
+    /// Used during the node preparation phase.
+    default_config_path: PathBuf,
 
     name: String,
     public_key: PublicKey,
+    secret_key: SecretKey,
     validator: bool,
 
     rpc_port: u16,
@@ -110,27 +113,32 @@ impl RunningNode {
     }
 
     /// Path where the node will run, with the config, secret key, chainspec, etc.
-    pub fn running_path(&self) -> &Path {
-        &self.running_path
+    pub fn data_dir(&self) -> &Path {
+        &self.data_dir
     }
 
     /// Path of the directory with binaries (node and wasm).
-    pub fn bin_path(&self) -> &Path {
-        &self.bin_path
+    pub fn artifact_dir(&self) -> &Path {
+        &self.artifact_dir
     }
 
     /// Chainspec path.
     pub fn chainspec_path(&self) -> PathBuf {
-        self.running_path().join("chainspec.toml")
+        self.data_dir().join("chainspec.toml")
     }
 
     /// Configuration path.
     pub fn config_path(&self) -> PathBuf {
-        self.running_path().join("config.toml")
+        self.data_dir().join("config.toml")
     }
 
     /// Secret key path.
     pub fn secret_key_path(&self) -> PathBuf {
-        self.running_path().join("secret_key.pem")
+        self.data_dir().join("secret_key.pem")
+    }
+
+    /// Public key path.
+    pub fn public_key_path(&self) -> PathBuf {
+        self.data_dir().join("public_key.pem")
     }
 }

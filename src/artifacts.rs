@@ -12,10 +12,6 @@ use std::{
 };
 use tokio::fs;
 
-// 1. Location.
-// 2. Compilation?
-// 3. Binary path
-
 /// The following files are included in the `Artifacts` path:
 ///
 /// - The Casper node binary;
@@ -37,7 +33,7 @@ pub struct ArtifactsBuilder {
 #[derive(Debug)]
 enum Location {
     /// Local codebase on the disk.
-    Local { project_path: Option<PathBuf> },
+    Local { project_dir: Option<PathBuf> },
     /// We'll download the codebase.
     Remote {
         url: Option<String>,
@@ -55,7 +51,7 @@ impl Artifacts {
     /// Creates a builder for a new binary. By default, it tries and use the local code.
     pub fn builder() -> ArtifactsBuilder {
         ArtifactsBuilder {
-            location: Location::Local { project_path: None },
+            location: Location::Local { project_dir: None },
             compile: None,
         }
     }
@@ -94,17 +90,17 @@ impl ArtifactsBuilder {
         let Self { location, compile } = self;
 
         let artifacts = match location {
-            Location::Local { project_path } => {
-                let project_path = project_path
+            Location::Local { project_dir } => {
+                let project_dir = project_dir
                     .unwrap_or_else(|| PathBuf::from("../casper-node"))
                     .canonicalize()
                     .map_err(Error::FailedToCanonicalizePath)?;
-                let dest = project_path.join("target/").join(crate::PROJECT_DIR);
+                let dest = project_dir.join("target/").join(crate::PROJECT_DIR);
 
                 if compile.unwrap_or(true) {
-                    run_compilation(&project_path).await?;
+                    run_compilation(&project_dir).await?;
                     // Let's copy everything to a canonical place:
-                    copy_project_output_to(&project_path, &dest).await?;
+                    copy_project_output_to(&project_dir, &dest).await?;
                 }
 
                 Artifacts(dest)
@@ -135,7 +131,7 @@ impl ArtifactsBuilder {
     pub fn local_path(self, path: impl Into<PathBuf>) -> Self {
         Self {
             location: Location::Local {
-                project_path: Some(path.into()),
+                project_dir: Some(path.into()),
             },
             ..self
         }

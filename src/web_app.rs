@@ -14,13 +14,13 @@ use crate::{
 };
 use axum::{
     extract::State as AxumState,
+    response::Html,
     routing::{get, post},
     Router,
 };
 use futures::FutureExt;
 use std::{path::PathBuf, time::Duration};
 use tokio::spawn;
-use tower_http::services::ServeFile;
 
 #[derive(Debug, Clone)]
 struct AppState {
@@ -34,9 +34,9 @@ pub async fn serve(nodes: Vec<RunningNode>, base_dir: PathBuf) -> Result<()> {
     let state = AppState { nodes, base_dir };
 
     let app = Router::new()
-        .route_service("/", ServeFile::new("public/index.html"))
-        .route_service("/index.css", ServeFile::new("public/index.css"))
-        .route_service("/favicon.ico", ServeFile::new("public/favicon.ico"))
+        .route("/", get(index))
+        .route("/index.css", get(css))
+        .route("/favicon.ico", get(favicon))
         .nest(
             "/file",
             Router::new().route("/*path", get(endpoints::static_file)),
@@ -68,4 +68,16 @@ async fn shutdown(AxumState(state): AxumState<AppState>) -> &'static str {
     }
 
     "Network has shut down"
+}
+
+async fn index() -> Html<&'static str> {
+    include_str!("../public/index.html").into()
+}
+
+async fn css() -> &'static str {
+    include_str!("../public/index.css")
+}
+
+async fn favicon() -> &'static [u8] {
+    include_bytes!("../public/favicon.ico")
 }

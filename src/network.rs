@@ -36,7 +36,7 @@ type RunningNodeSet = JoinSet<(String, NodeStatus)>;
 /// is created, and it is ready to start, or already started.
 #[derive(Clone, Debug)]
 pub struct RunningNetwork {
-    nodes: Vec<RunningNode>,
+    pub(crate) nodes: Vec<RunningNode>,
     tasks: Arc<Mutex<RunningNodeSet>>,
     temp_directory: Arc<tempfile::TempDir>,
 }
@@ -89,12 +89,27 @@ impl RunningNetwork {
     pub fn nodes_count(&self) -> usize {
         self.nodes.len()
     }
+
+    /// Returns the directory where all the data is located in.
+    pub fn temp_directory(&self) -> &Path {
+        self.temp_directory.path()
+    }
 }
 
 impl RunningNode {
     /// Returns the node name.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Returns weither the node is a validator or not.
+    pub fn validator(&self) -> bool {
+        self.validator
+    }
+
+    /// Returns if the node is running.
+    pub async fn running(&self) -> bool {
+        self.status.lock().await.running()
     }
 
     /// Returns the RPC port for this node.
@@ -140,5 +155,11 @@ impl RunningNode {
     /// Public key path.
     pub fn public_key_path(&self) -> PathBuf {
         self.data_dir().join("public_key.pem")
+    }
+}
+
+impl NodeStatus {
+    fn running(&self) -> bool {
+        matches!(self, Self::Running)
     }
 }

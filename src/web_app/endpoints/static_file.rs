@@ -11,7 +11,7 @@ pub async fn static_file(
     AxumState(state): AxumState<AppState>,
     AxumPath(path): AxumPath<PathBuf>,
 ) -> Result<Html<String>, (StatusCode, &'static str)> {
-    let path = state.base_dir.join(path);
+    let path = state.network.temp_directory().join(path);
 
     let content = fs::read_to_string(&path)
         .await

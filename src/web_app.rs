@@ -6,32 +6,33 @@ mod endpoints {
     pub use node_status::node_status;
     mod static_file;
     pub use static_file::static_file;
+    mod stop_start;
+    pub use stop_start::stop_start;
 }
 
 use crate::{
     error::{Error, Result},
-    network::RunningNode,
+    network::RunningNetwork,
 };
 use axum::{
     extract::State as AxumState,
-    response::Html,
+    response::{Html, IntoResponse},
     routing::{get, post},
     Router,
 };
 use futures::FutureExt;
-use std::{path::PathBuf, time::Duration};
+use std::time::Duration;
 use tokio::spawn;
 
 #[derive(Debug, Clone)]
 struct AppState {
-    nodes: Vec<RunningNode>,
-    base_dir: PathBuf,
+    network: RunningNetwork,
 }
 
-pub async fn serve(nodes: Vec<RunningNode>, base_dir: PathBuf) -> Result<()> {
+pub async fn serve(network: RunningNetwork) -> Result<()> {
     use endpoints::*;
 
-    let state = AppState { nodes, base_dir };
+    let state = AppState { network };
 
     let app = Router::new()
         .route("/", get(index))
@@ -43,6 +44,7 @@ pub async fn serve(nodes: Vec<RunningNode>, base_dir: PathBuf) -> Result<()> {
         )
         .route("/node-status", get(node_status))
         .route("/shutdown", post(shutdown))
+        .route("/stop-start", post(stop_start))
         .with_state(state);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:6532").await.unwrap();
 
@@ -63,7 +65,7 @@ pub async fn serve(nodes: Vec<RunningNode>, base_dir: PathBuf) -> Result<()> {
 
 async fn shutdown(AxumState(state): AxumState<AppState>) -> &'static str {
     log::debug!("Kill all nodes signal sent");
-    for node in &state.nodes {
+    for node in &state.network.nodes {
         let _ = node.kill().await;
     }
 
@@ -74,8 +76,11 @@ async fn index() -> Html<&'static str> {
     include_str!("../public/index.html").into()
 }
 
-async fn css() -> &'static str {
-    include_str!("../public/index.css")
+async fn css() -> impl IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/css")],
+        include_str!("../public/index.css"),
+    )
 }
 
 async fn favicon() -> &'static [u8] {

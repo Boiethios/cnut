@@ -80,12 +80,12 @@ impl RunningNetwork {
 
     /// Serves the web app for debugging, then returns immediately (non-blocking).
     pub async fn serve_web_app(&self) -> Result<()> {
-        web_app::serve(self.nodes.clone(), self.temp_directory.path().to_owned()).await
+        web_app::serve(self.clone()).await
     }
 
     /// Serves the web app for debugging, then wait for the network to stop.
     pub async fn serve_web_app_and_wait(&self) -> Result<()> {
-        web_app::serve(self.nodes.clone(), self.temp_directory.path().to_owned()).await?;
+        web_app::serve(self.clone()).await?;
         self.wait().await
     }
 

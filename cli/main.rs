@@ -12,7 +12,7 @@ async fn main() -> cnut::error::Result<()> {
 
     let _network = NetworkBuilder::new()
         .with(5 * Node::validator(artifacts.clone()).name("Alice"))
-        .with(Node::validator(artifacts.clone()).name("Bob"))
+        .with(Node::keep_up(artifacts.clone()).name("Bob"))
         .with(Node::validator(artifacts.clone()))
         .with(Chainspec::from(artifacts))
         //.with(5 * Node::validator(artifacts.clone()).config("../config.toml"))

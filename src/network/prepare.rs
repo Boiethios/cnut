@@ -4,10 +4,7 @@
 use crate::{
     error::{Error, Result},
     network::{NetworkBuilder, RunningNetwork, RunningNode},
-    util::{
-        crypto::{self, generate_pair},
-        toml_map, update_toml, LettersGen, Spinner,
-    },
+    util::{crypto::generate_pair, toml_map, update_toml, LettersGen, Spinner},
 };
 use std::{
     path::Path,
@@ -203,6 +200,7 @@ fn accounts(nodes: &[RunningNode]) -> toml::Value {
         .map(|node| {
             let mut map = Map::new();
             map.insert("public_key".to_owned(), node.public_key.to_string().into());
+            //TODO make it random by default (if no value is specified)
             map.insert(
                 "balance".to_owned(),
                 "1000000000000000000000000000".to_owned().into(),
@@ -212,6 +210,7 @@ fn accounts(nodes: &[RunningNode]) -> toml::Value {
                     let mut map = Map::new();
                     map.insert(
                         "bonded_amount".to_owned(),
+                        //TODO make it random by default (if no value is specified)
                         "500000000000000".to_owned().into(),
                     );
                     map.into()

@@ -24,20 +24,17 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use tokio::{
-    sync::{oneshot, Mutex},
-    task::JoinSet,
-};
+use tokio::sync::{oneshot, Mutex};
 
 type ProcessExitStatus = std::result::Result<std::process::ExitStatus, std::io::Error>;
-type RunningNodeSet = JoinSet<(String, NodeStatus)>;
 
 /// A network representation in CNUT. When this type is obtained, the file tree
 /// is created, and it is ready to start, or already started.
 #[derive(Clone, Debug)]
 pub struct RunningNetwork {
     pub(crate) nodes: Vec<RunningNode>,
-    tasks: Arc<Mutex<RunningNodeSet>>,
+    exit_signal_sender: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+    exit_signal_receiver: Arc<Mutex<oneshot::Receiver<()>>>,
     temp_directory: Arc<tempfile::TempDir>,
 }
 
@@ -93,6 +90,13 @@ impl RunningNetwork {
     /// Returns the directory where all the data is located in.
     pub fn temp_directory(&self) -> &Path {
         self.temp_directory.path()
+    }
+
+    /// Tells the network to stop, and return the wait functions.
+    pub async fn shutdown(&self) {
+        if let Some(sender) = self.exit_signal_sender.lock().await.take() {
+            let _ = sender.send(());
+        }
     }
 }
 

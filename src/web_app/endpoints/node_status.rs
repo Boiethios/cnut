@@ -38,11 +38,11 @@ pub async fn node_status(State(state): State<AppState>) -> String {
                         }
                         td{ @if status.validator { "Yes" } @else { "No" } }
                         td{a .file href=(path) {"config.toml"}}
-                        td{button hx-post=(stop_start) {@if status.running {
-                            "Stop"
+                        td{@if status.running {
+                            button class="red" hx-post=(stop_start) {"Stop"}
                         } @else {
-                            "Start"
-                        }}}
+                            button class="green" hx-post=(stop_start) {"Start"}
+                        }}
                     }
                 }
             }

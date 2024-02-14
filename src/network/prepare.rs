@@ -13,7 +13,10 @@ use std::{
     time::{Duration, SystemTime},
 };
 use tempfile::TempDir;
-use tokio::fs;
+use tokio::{
+    fs,
+    sync::{oneshot, Mutex},
+};
 
 pub async fn prepare_network(network: NetworkBuilder) -> Result<RunningNetwork> {
     let temp_directory = create_temp_dir()?;
@@ -115,11 +118,13 @@ pub async fn prepare_network(network: NetworkBuilder) -> Result<RunningNetwork> 
     })?;
 
     spinner.success();
+    let (sender, receiver) = oneshot::channel();
 
     Ok(RunningNetwork {
         temp_directory,
         nodes,
-        tasks: Default::default(),
+        exit_signal_sender: Arc::new(Mutex::new(Some(sender))),
+        exit_signal_receiver: Arc::new(Mutex::new(receiver)),
     })
 }
 

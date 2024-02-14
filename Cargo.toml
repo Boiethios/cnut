@@ -41,4 +41,5 @@ features = [
     "process", # To run sub-processes
     "fs", # To read directories, copy files, etc.
     "sync", # To get the oneshot channel
+    "signal", # To catch the CTRL+C signal
 ]

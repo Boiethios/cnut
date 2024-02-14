@@ -65,11 +65,9 @@ pub async fn serve(network: RunningNetwork) -> Result<()> {
 
 async fn shutdown(AxumState(state): AxumState<AppState>) -> &'static str {
     log::debug!("Kill all nodes signal sent");
-    for node in &state.network.nodes {
-        let _ = node.kill().await;
-    }
+    state.network.shutdown().await;
 
-    "Network has shut down"
+    "Network is shutting down"
 }
 
 async fn index() -> Html<&'static str> {

@@ -11,32 +11,21 @@ pub async fn stop_start(
     State(state): State<AppState>,
     Query(Named { name }): Query<Named>,
 ) -> Result<(), &'static str> {
+    log::trace!("stop_start endpoint");
     let node = state
         .network
         .nodes
         .iter()
         .find(|node| node.name() == name)
-        .ok_or("Unknown node name")?;
+        .ok_or("Unknown node name")
+        .inspect_err(|_| log::warn!("Unknown node name: {name}"))?;
 
     if node.running().await {
-        // STOP
-        let kill_sender = node
-            .kill_sender
-            .lock()
-            .await
-            .take()
-            .ok_or("No killer handle")?;
-        kill_sender
-            .send(())
-            .map_err(|_| "Cannot send the kill signal")?;
+        log::debug!("Node {name} is asked to STOP");
+        node.stop().await.map_err(|_| "Cannot stop the node")?;
     } else {
-        // START
-        state
-            .network
-            .start(&name)
-            .await
-            .map_err(|_| "Cannot start the network")?;
-        log::debug!("Node {name} started");
+        log::debug!("Node {name} is asked to START");
+        node.start().await.map_err(|_| "Cannot start the node")?;
     }
 
     Ok(())

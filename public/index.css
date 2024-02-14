@@ -19,6 +19,14 @@ button.big {
     margin: 1em 0;
 }
 
+button.green {
+    background-color: lightgreen;
+}
+
+button.red {
+    background-color: lightcoral;
+}
+
 a.file {
     color: inherit;
 

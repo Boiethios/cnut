@@ -13,10 +13,8 @@ use std::{
     time::{Duration, SystemTime},
 };
 use tempfile::TempDir;
-use tokio::{
-    fs,
-    sync::{oneshot, Mutex},
-};
+use tokio::fs;
+use tokio_util::task::TaskTracker;
 
 pub async fn prepare_network(network: NetworkBuilder) -> Result<RunningNetwork> {
     let temp_directory = create_temp_dir()?;
@@ -24,6 +22,11 @@ pub async fn prepare_network(network: NetworkBuilder) -> Result<RunningNetwork> 
     let chainspec_path = base_data_dir.join("chainspec.toml");
     let accounts_path = base_data_dir.join("accounts.toml");
     let spinner = Spinner::create("Preparing the node files");
+    let task_tracker = {
+        let tt = TaskTracker::default();
+        tt.close();
+        tt
+    };
 
     log::debug!("Running dir created at: {:?}", base_data_dir);
     println!("Running dir created at: {:?}", base_data_dir);
@@ -39,7 +42,7 @@ pub async fn prepare_network(network: NetworkBuilder) -> Result<RunningNetwork> 
     )
     .await?;
 
-    let nodes = node_data(network.nodes, base_data_dir);
+    let nodes = node_data(network.nodes, base_data_dir, &task_tracker);
 
     let known_addresses: Vec<_> = (port::bind(0)..port::bind(nodes.len()))
         .map(|i| toml::Value::from(format!("127.0.0.1:{i}")))
@@ -118,13 +121,13 @@ pub async fn prepare_network(network: NetworkBuilder) -> Result<RunningNetwork> 
     })?;
 
     spinner.success();
-    let (sender, receiver) = oneshot::channel();
 
     Ok(RunningNetwork {
-        temp_directory,
         nodes,
-        exit_signal_sender: Arc::new(Mutex::new(Some(sender))),
-        exit_signal_receiver: Arc::new(Mutex::new(receiver)),
+        temp_directory,
+        shutdown_state: Default::default(),
+        exit_notification: Arc::new(Default::default()),
+        task_tracker,
     })
 }
 
@@ -272,7 +275,11 @@ mod port {
 }
 
 /// Convert the `Node`s into `RunningNode`s.
-fn node_data(nodes: Vec<super::Node>, base_data_dir: &Path) -> Vec<RunningNode> {
+fn node_data(
+    nodes: Vec<super::Node>,
+    base_data_dir: &Path,
+    task_tracker: &TaskTracker,
+) -> Vec<RunningNode> {
     let mut result = Vec::new();
     let mut index = 0..;
     let mut conf_names = LettersGen::new();
@@ -324,8 +331,10 @@ fn node_data(nodes: Vec<super::Node>, base_data_dir: &Path) -> Vec<RunningNode> 
                 rpc_port,
                 rest_port,
                 speculative_execution_port,
+                process_id: Default::default(),
+                task_tracker: task_tracker.clone(),
                 status: Default::default(),
-                kill_sender: Default::default(),
+                kill_notifier: Default::default(),
             })
         }
     }

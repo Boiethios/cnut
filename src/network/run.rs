@@ -14,8 +14,11 @@ use crate::{
     network::{NodeStatus, RunningNetwork, RunningNode},
     web_app,
 };
-use std::process::{ExitStatus, Stdio};
-use tokio::{process::Command, select, signal, sync::oneshot};
+use std::{
+    process::{ExitStatus, Stdio},
+    sync::Arc,
+};
+use tokio::{process::Command, select, signal, sync::mpsc};
 
 impl RunningNetwork {
     /// Starts all the nodes.
@@ -42,14 +45,12 @@ impl RunningNetwork {
     /// will deadlock the call.
     pub async fn wait(&self) -> Result<()> {
         select! {
-            _ = signal::ctrl_c() => {},
-            _ = self.exit_signal_receiver.lock() => {},
+            _ = signal::ctrl_c() => {log::debug!("Got CTRL+C signal, shutting down")},
+            _ = self.exit_notification.notified() => {log::debug!("Got a shutting down order")},
+            _ = self.task_tracker.wait() => {log::debug!("No node is running anymore")},
         };
 
-        log::warn!("Network will now shut down");
-        for node in self.nodes.iter() {
-            let _ = node.stop().await; //TODO
-        }
+        clean_kill_all(self).await;
 
         Ok(())
     }
@@ -83,8 +84,7 @@ impl RunningNetwork {
 
 impl RunningNode {
     /// Starts the node.
-    pub async fn start(&self) -> Result<()> {
-        let (kill_sender, kill_receiver) = oneshot::channel();
+    pub async fn start(&mut self) -> Result<()> {
         let node_path = self.artifact_dir.join("casper-node");
         let config_path = self.data_dir.join("config.toml");
         let mut child = Command::new(&node_path)
@@ -103,14 +103,17 @@ impl RunningNode {
                 io_err,
             })?;
 
-        log::debug!("Node {} spawned successfully", self.name);
+        log::info!("Node {} spawned successfully", self.name);
 
         let name = self.name.clone();
-        tokio::spawn(async move {
+        let kill_notifier = self.kill_notifier.clone();
+        let pid = child.id().unwrap_or_default();
+        self.task_tracker.spawn(async move {
             let (result, crash) = tokio::select! {
                 exit_result = child.wait() => (exit_result, true), // Early exit (error in the node for example)
-                _ = kill_receiver => (child.kill().await.map(|()| ExitStatus::default()), false),
+                _ = kill_notifier.notified() => (child.kill().await.map(|()| ExitStatus::default()), false),
             };
+            log::info!("Child process {name:?} has stopped: {result:?}. Crashed: {crash}");
 
             if let Err(io_err) = result.as_ref() {
                 log::warn!("Child process {name:?} has errored: {io_err:?}");
@@ -123,26 +126,26 @@ impl RunningNode {
             (name, status)
         });
 
-        *self.kill_sender.lock().await = Some(kill_sender);
+        self.process_id
+            .store(pid, std::sync::atomic::Ordering::Relaxed);
         *self.status.lock().await = NodeStatus::Running;
 
         Ok(())
     }
 
     /// Stops the node.
-    pub async fn stop(&self) -> Result<()> {
-        match self.kill_sender.lock().await.take() {
-            Some(kill_sender) => {
-                if let Err(()) = kill_sender.send(()) {
-                    log::warn!(
-                        "Kill signal could not be send to {}, maybe it has already shut down",
-                        self.name()
-                    )
-                }
-            }
-            None => log::warn!("The node was ordered to get killed, but it is not running"),
-        }
-        *self.status.lock().await = NodeStatus::Stopped(Ok(ExitStatus::default())); //TODO
+    pub async fn stop(&mut self) -> Result<()> {
+        self.kill_process()?;
+        self.process_id
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        *self.status.lock().await = NodeStatus::Stopped(Ok(ExitStatus::default()));
+
+        Ok(())
+    }
+
+    /// Returns `true` if the process could be killed (*i.e.* it is not running).
+    pub(crate) fn kill_process(&mut self) -> Result<()> {
+        self.kill_notifier.notify_one();
 
         Ok(())
     }
@@ -150,5 +153,37 @@ impl RunningNode {
     /// Returns the current status for the node.
     pub async fn status<'a>(&'a self) -> tokio::sync::MutexGuard<'a, NodeStatus> {
         self.status.lock().await
+    }
+}
+
+impl Drop for RunningNetwork {
+    fn drop(&mut self) {
+        // If the network has not been shut down correctly,
+        // kill all the hard way:
+        if self.shutdown_state.must_shut_down() {
+            hard_kill_all(self);
+        }
+    }
+}
+
+/// Set the network as shutting down and ask all the processes to stop.
+async fn clean_kill_all(network: &RunningNetwork) {
+    log::info!("Network will now shut down");
+
+    //TODO verify that the network isn't already shutting down
+
+    for mut node in network.nodes.iter().map(Clone::clone) {
+        let _ = node.stop().await;
+    }
+}
+
+/// Set the network as shutting down and force kill all the processes.
+fn hard_kill_all(network: &RunningNetwork) {
+    log::info!("Network will now shut down");
+
+    for mut node in network.nodes.iter().map(Clone::clone) {
+        if node.process_id.load(std::sync::atomic::Ordering::Relaxed) != 0 {
+            //
+        }
     }
 }

@@ -3,9 +3,16 @@ pub use spinner::Spinner;
 mod dir;
 pub use dir::cache;
 pub mod crypto;
+mod process;
+pub use process::NodeProcess;
 
 use crate::error::{ProcessError, Result};
-use std::{ffi::OsStr, path::Path, process::Output};
+use std::{
+    ffi::OsStr,
+    path::Path,
+    process::Output,
+    sync::{atomic::AtomicU8, Arc},
+};
 use tokio::process::Command;
 
 pub trait ProcessOutputExt {
@@ -146,4 +153,35 @@ pub fn update_toml(mut content: toml::Value, updates: toml::Table) -> toml::Valu
     merge_toml_value(&mut content, updates.into());
 
     content
+}
+
+/// 0: network is running.
+/// 1: network must shut down.
+/// 2: network has already shut down.
+#[derive(Debug, Default, Clone)]
+pub struct ShutdownState(Arc<AtomicU8>);
+
+impl Drop for ShutdownState {
+    fn drop(&mut self) {
+        // If it's the last reference, mark the node as shutting down:
+        if Arc::strong_count(&self.0) == 1 {
+            self.set_shut_down();
+        }
+    }
+}
+
+impl ShutdownState {
+    pub fn must_shut_down(&self) -> bool {
+        let order = std::sync::atomic::Ordering::Relaxed;
+        match self.0.compare_exchange(1, 2, order, order) {
+            Ok(_must_shut_down) => true,
+            Err(_running_or_has_shut_down) => false,
+        }
+    }
+
+    pub fn set_shut_down(&self) {
+        // If it's on 0:running, store that it must shut down:
+        let order = std::sync::atomic::Ordering::Relaxed;
+        let _ = self.0.compare_exchange(0, 1, order, order);
+    }
 }

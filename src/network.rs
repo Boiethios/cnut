@@ -19,12 +19,22 @@ pub use describe::{Chainspec, NetworkBuilder, Node};
 pub(crate) use describe::NodeConfig;
 pub(crate) use prepare::prepare_network;
 
-use crate::util::crypto::{PublicKey, SecretKey};
+use crate::util::{
+    crypto::{PublicKey, SecretKey},
+    ShutdownState,
+};
 use std::{
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU32, AtomicU64},
+        Arc,
+    },
 };
-use tokio::sync::{oneshot, Mutex};
+use tokio::{
+    process::Child,
+    sync::{Mutex, Notify},
+};
+use tokio_util::task::task_tracker::TaskTracker;
 
 type ProcessExitStatus = std::result::Result<std::process::ExitStatus, std::io::Error>;
 
@@ -33,9 +43,10 @@ type ProcessExitStatus = std::result::Result<std::process::ExitStatus, std::io::
 #[derive(Clone, Debug)]
 pub struct RunningNetwork {
     pub(crate) nodes: Vec<RunningNode>,
-    exit_signal_sender: Arc<Mutex<Option<oneshot::Sender<()>>>>,
-    exit_signal_receiver: Arc<Mutex<oneshot::Receiver<()>>>,
     temp_directory: Arc<tempfile::TempDir>,
+    shutdown_state: ShutdownState,
+    exit_notification: Arc<Notify>,
+    task_tracker: TaskTracker,
 }
 
 /// A running node. It can be started, stopped or crashed.
@@ -60,8 +71,10 @@ pub struct RunningNode {
     rest_port: u16,
     speculative_execution_port: u16,
 
+    process_id: Arc<AtomicU32>,
+    task_tracker: TaskTracker,
     status: Arc<Mutex<NodeStatus>>,
-    pub(crate) kill_sender: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+    pub(crate) kill_notifier: Arc<Notify>,
 }
 
 /// The status of the node.
@@ -92,11 +105,9 @@ impl RunningNetwork {
         self.temp_directory.path()
     }
 
-    /// Tells the network to stop, and return the wait functions.
-    pub async fn shutdown(&self) {
-        if let Some(sender) = self.exit_signal_sender.lock().await.take() {
-            let _ = sender.send(());
-        }
+    /// Orders the network to shutdown. This causes the wait functions to return.
+    pub fn shutdown(&self) {
+        self.exit_notification.notify_one();
     }
 }
 

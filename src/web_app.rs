@@ -65,7 +65,7 @@ pub async fn serve(network: RunningNetwork) -> Result<()> {
 
 async fn shutdown(AxumState(state): AxumState<AppState>) -> &'static str {
     log::debug!("Kill all nodes signal sent");
-    state.network.shutdown().await;
+    state.network.shutdown();
 
     "Network is shutting down"
 }

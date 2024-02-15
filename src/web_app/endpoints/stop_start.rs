@@ -8,14 +8,14 @@ pub struct Named {
 }
 
 pub async fn stop_start(
-    State(state): State<AppState>,
+    State(mut state): State<AppState>,
     Query(Named { name }): Query<Named>,
 ) -> Result<(), &'static str> {
     log::trace!("stop_start endpoint");
     let node = state
         .network
         .nodes
-        .iter()
+        .iter_mut()
         .find(|node| node.name() == name)
         .ok_or("Unknown node name")
         .inspect_err(|_| log::warn!("Unknown node name: {name}"))?;

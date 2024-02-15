@@ -43,3 +43,9 @@ features = [
     "sync", # To get the oneshot channel
     "signal", # To catch the CTRL+C signal
 ]
+
+[dependencies.tokio-util]
+version = "0.7"
+features = [
+    "rt",
+]

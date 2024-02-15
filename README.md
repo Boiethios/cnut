@@ -1,5 +1,7 @@
 # Casper Network Utility Testing
 
+Felix's Utility for NetworKing (FUNK)
+
 ## Must be installed
 
 - `rustup`
